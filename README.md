@@ -18,97 +18,12 @@
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         Browser / Mobile Client                          │
-│                                                                          │
-│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────────┐  │
-│  │   Text Chat UI   │  │  Voice Chat UI   │  │   Admin Dashboard    │  │
-│  │  React + Vite    │  │ AudioWorklet PCM │  │  HITL + Analytics    │  │
-│  └────────┬─────────┘  └────────┬─────────┘  └──────────┬───────────┘  │
-└───────────┼────────────────────┼───────────────────────┼───────────────┘
-            │ HTTPS / SSE        │ WebSocket              │ HTTPS
-            ▼                    ▼                        ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                        FastAPI Backend (Uvicorn)                         │
-│                                                                          │
-│  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │                  LangGraph StateGraph Agent                      │   │
-│  │                                                                  │   │
-│  │   ┌─────────────┐    ┌──────────────┐    ┌──────────────────┐  │   │
-│  │   │ Input Guard │───▶│   Classify   │───▶│  Route Decision  │  │   │
-│  │   │ (Regex+LLM) │    │    Intent    │    │                  │  │   │
-│  │   └─────────────┘    └──────────────┘    └────────┬─────────┘  │   │
-│  │                                                    │            │   │
-│  │              ┌─────────────────┬──────────────────┤            │   │
-│  │              ▼                 ▼                  ▼            │   │
-│  │       INFO_QUERY         ACTION_REQUEST      SENSITIVE/FRAUD   │   │
-│  │              │                 │                  │            │   │
-│  │              ▼                 ▼                  ▼            │   │
-│  │      ┌──────────────┐  ┌──────────────┐  ┌──────────────┐    │   │
-│  │      │ Hybrid RAG   │  │  Tool Router │  │   Blocked    │    │   │
-│  │      │ BM25 + FAISS │  │ (LLM select) │  │   Response   │    │   │
-│  │      │ + Reranker   │  └──────┬───────┘  └──────────────┘    │   │
-│  │      │ + Confidence │         │                               │   │
-│  │      └──────┬───────┘  ┌──────▼──────────────────────────┐   │   │
-│  │             │           │  Tools                          │   │   │
-│  │             ▼           │  • send_email_statement()       │   │   │
-│  │      ┌──────────────┐   │  • fetch_account_summary()     │   │   │
-│  │      │ Output Guard │   │  • escalate_to_human()         │   │   │
-│  │      │  (Scanner)   │   │  • request_callback()          │   │   │
-│  │      └──────┬───────┘   │  • apply_for_loan() ──────────────────┐ │
-│  │             │           └─────────────────────────────────┘   │   │ │
-│  └─────────────┼─────────────────────────────────────────────────┘   │ │
-│                │                                                       │ │
-│  ┌─────────────▼──────────────┐  ┌────────────────────────────────┐  │ │
-│  │     Faster-Whisper STT     │  │  LoanFlow LangGraph (separate) │◀─┘ │
-│  │  base.en + banking prompt  │  │  Multi-turn: type→amount→      │    │
-│  │  + VAD filter + beam=5     │  │  income→purpose→confirm→submit │    │
-│  └────────────────────────────┘  └────────────────────────────────┘    │
-│                                                                          │
-│  ┌────────────────────────────────────────────────────────────────────┐ │
-│  │  RealtimeSTT WebSocket Voice Pipeline                              │ │
-│  │  AudioWorklet 16kHz PCM → STT → RAG → Kokoro TTS → Audio chunks  │ │
-│  │  Interruption detection via TTS-playing flag in packet header     │ │
-│  └────────────────────────────────────────────────────────────────────┘ │
-└──────────────────────────────┬──────────────────────────────────────────┘
-                               │
-              ┌────────────────┼────────────────┐
-              ▼                ▼                ▼
-     ┌────────────────┐ ┌────────────┐ ┌────────────────┐
-     │  PostgreSQL 15 │ │  Redis 7   │ │  Groq API      │
-     │                │ │            │ │                │
-     │  • users       │ │  • memory  │ │  LLaMA3 70B    │
-     │  • sessions    │ │  • sessions│ │  Fast LPU      │
-     │  • interactions│ │  • loan    │ │  inference     │
-     │  • escalations │ │    state   │ └────────────────┘
-     └────────────────┘ └────────────┘
-```
+
+![Architecture Diagram](./image.png)
 
 ---
 
-## Features
 
-| Phase | Feature | Description |
-|-------|---------|-------------|
-| 0 | Foundation | FastAPI + React + Vite project scaffold |
-| 1 | RAG Core | PDF → chunks → FAISS → LLaMA3 grounded answers |
-| 2 | Voice I/O | Faster-Whisper STT + gTTS with banking domain prompt |
-| 3 | Intent Classification | 5-class LLM router: INFO / ACTION / SENSITIVE / FRAUD / CHITCHAT |
-| 4 | Guardrails | Regex input filter + LLM output scanner + safe fallbacks |
-| 5 | Agent Tools | Email statement (Gmail SMTP), escalate, callback, account summary |
-| 6 | Memory | Redis-backed conversation memory with chat restore on login |
-| 7 | Streaming | SSE token-by-token streaming with cursor animation |
-| 8 | HITL | Escalation queue, admin dashboard, human resolve workflow |
-| 9 | Observability | PostgreSQL logs, JSONL audit trail, analytics dashboard |
-| + | Auth | JWT + bcrypt + Redis session cache + user registration |
-| + | Hybrid RAG | BM25 + FAISS ensemble + cross-encoder reranking + confidence scoring |
-| + | Query Expansion | 3-variant query expansion to improve recall |
-| + | LangGraph Agent | StateGraph with conditional edges, tool retry loop |
-| + | Loan Flow | Multi-turn agentic loan application with eligibility + email |
-| + | Realtime Voice | AudioWorklet, RealtimeSTT, barge-in interruption |
-
----
 
 ## Tech Stack
 
@@ -193,13 +108,34 @@ cp .env.example .env
 Edit `.env`:
 
 ```env
-GROQ_API_KEY=gsk_...              # Required — from console.groq.com
-JWT_SECRET=<32+ char random>      # Run: openssl rand -hex 32
+# ── Groq (LLM inference) ──────────────────────────────────────
+GROQ_API_KEY=gsk_..
+MODEL_NAME=llama-3.3-70b-versatile
+
+# ── Embeddings (HuggingFace local — no key needed) ────────────
+EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+
+# ── RAG settings ──────────────────────────────────────────────
+PDF_PATH=data/banking_policy.pdf
+FAISS_INDEX_PATH=data/faiss_index
+CHUNK_SIZE=400
+CHUNK_OVERLAP=80
+TOP_K=5
+SMTP_EMAIL=s23784619@gmail.com
+SMTP_APP_PASSWORD=leul uqrl gaab uutc
+JWT_SECRET=bf963cba27611249ea6e0344b175898a434ecfc0d6fc001c49bb890795947305
+# PostgreSQL
 DATABASE_URL=postgresql+asyncpg://banking_user:banking_pass@localhost:5432/banking_agent
 DATABASE_URL_SYNC=postgresql://banking_user:banking_pass@localhost:5432/banking_agent
+
+# Redis
 REDIS_URL=redis://localhost:6379/0
-SMTP_EMAIL=yourname@gmail.com     # Optional — for statement emails
-SMTP_APP_PASSWORD=xxxx xxxx xxxx xxxx
+
+# ── Frontend (Vite) ───────────────────────────────────────────
+# Local development
+VITE_API_URL=http://localhost:8000
+
+
 ```
 
 ### 5. Add your banking PDF
@@ -397,26 +333,9 @@ User: "Yes"
   ▼ submit_application → generates LOAN ref → sends confirmation email
 ```
 
----
 
-## Resume Talking Points
 
-**One-liner:**
-> "Built a production-grade voice-enabled banking assistant combining RAG, a LangGraph StateGraph agent, multi-layer guardrails, and real-time WebSocket voice with barge-in interruption — backed by PostgreSQL and Redis."
-
-**Key interview answers:**
-
-**On RAG accuracy:** "The query goes through BM25 + FAISS ensemble retrieval across three expanded phrasings, then cross-encoder reranking scores each chunk against the original query. Confidence is computed via sigmoid of the top reranker logit — below 0.3 triggers human escalation rather than risking a hallucinated answer."
-
-**On LangGraph:** "A simple function call can't retry on failure, chain tool results back into reasoning, or conditionally branch based on what a tool returns. LangGraph's StateGraph defines explicit nodes and conditional edges — if a tool fails, the agent loops back to select_tool with the failure context. The loan flow is a separate LangGraph maintaining state across multiple HTTP requests via Redis."
-
-**On voice:** "The AudioWorklet captures 16kHz PCM and streams binary frames over WebSocket with an 8-byte header containing a timestamp and TTS-playing flag. When the server receives audio while TTS is playing, it immediately stops the stream and sends an interrupt signal — barge-in under 200ms, like how Alexa handles interruptions."
-
-**On production readiness:** "JWT auth with Redis session caching avoids DB hits on every request. Multi-layer safety means regex pre-filter catches patterns before any LLM call. PostgreSQL has proper indexes on session_id, intent, and timestamp. Everything is containerised with Docker Compose — one command starts all services with health checks."
-
----
-
-## Docker (written — pending deployment)
+## Docker 
 
 ```bash
 # Development with hot reload
