@@ -1,0 +1,4 @@
+Place your banking policy PDF here.
+Rename it to: banking_policy.pdf
+
+Or update PDF_PATH in your .env file to match your filename.
